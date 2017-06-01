@@ -1,0 +1,226 @@
+---
+title: "Untitled"
+author: "Jiabei Yang"
+date: "5/31/2017"
+output: pdf_document
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+```
+
+# Read in Datasets
+
+```{r}
+class14_s1 <- read.csv("../Original/CLASS 2014 STAGE 1 (2012).csv")
+class14_s2 <- read.csv("../Original/CLASS 2014 STAGE 2 (2013).csv")
+class14_s3 <- read.csv("../Original/CLASS 2014 STAGE 3 (2014).csv")
+sampSubmiss <- read.csv("../SampleSubmission/prediction.csv")
+training <- read.csv("../Original/TRAINING DATASET.csv")
+```
+
+
+# Find training dataset and fit model
+
+```{r}
+Find_elites <- function(training){
+  yr_loc <- unique(training[, c("YEAR", "LOCATION")])
+  range_rm <- range(training$RM)
+  
+  new_training <- NULL
+  for (i in 1:dim(yr_loc)[1]){
+    sub_training <- training %>% 
+      filter((YEAR == yr_loc$YEAR[i]) & LOCATION == yr_loc$LOCATION[i])
+  
+    if (length(unique(sub_training$RM[sub_training$CHECK == "True"])) > 1){
+      sub_training <- sub_training %>% 
+      mutate(labels = as.character(cut(sub_training$RM, 
+                  breaks = unique(sub_training$RM[sub_training$CHECK == "True"]),
+                  labels = 1:(length(unique(sub_training$RM[sub_training$CHECK == "True"]))-1))))
+      sub_training[is.na(sub_training$labels), "labels"] <- "1"
+    } else {
+      sub_training <- sub_training %>% mutate(labels = "1")
+    }
+    
+    benchmark <- sub_training %>% 
+      filter((CHECK == "True") | (CHECK == "TRUE")) %>%
+      group_by(labels) %>%
+      summarise(mean_yield_bench = mean(YIELD))
+    
+    sub_training <- left_join(sub_training, benchmark, by = "labels")
+    if (dim(benchmark)[1] == 0){
+      sub_training$mean_yield_bench <- mean(training[(training$CHECK == "True") |
+                                                       (training$CHECK == "TRUE"), "YIELD"])
+    }
+    
+    sub_training <- sub_training %>% 
+      mutate(Outperform = as.numeric(YIELD >= mean_yield_bench))
+      
+    # tmp <- sub_training %>% group_by(VARIETY) %>%
+    #   summarise(tot_Outperform = sum(Outperform), NoTested = n()) 
+    # 
+    # sub_training <- sub_training %>% left_join(tmp, by = "VARIETY")
+    new_training <- rbind(new_training, sub_training)
+  }
+  
+  training <- new_training
+  new_training <- NULL
+  
+  tmp <- training %>% group_by(YEAR, VARIETY) %>%
+    summarise(totOutperform = sum(Outperform), NoTestedLoc = n()) %>%
+    mutate(probOutperform = totOutperform / NoTestedLoc,
+           weightedProb=(totOutperform / NoTestedLoc + NoTestedLoc/max(NoTestedLoc))/2) %>%
+    arrange(desc(weightedProb))
+  tmp <- tmp %>% 
+    filter(VARIETY %in% 
+             training[(training$CHECK == "FALSE") | (training$CHECK == "False"), "VARIETY"])
+  
+  return(tmp)
+  
+}
+```
+
+
+```{r}
+res_s1 <- Find_elites(class14_s1)
+res_s2 <- Find_elites(class14_s2)
+res_s3 <- Find_elites(class14_s3)
+
+ResSubmiss <- sampSubmiss %>% mutate(PREDICTION = 0)
+
+ResSubmiss <- ResSubmiss %>% 
+  mutate(PREDICTION = ifelse(VARIETY_ID %in% as.character(res_s3$VARIETY[1:13]), 1, PREDICTION))
+write.csv(ResSubmiss, "RMgroupS3_true13.csv", row.names = F)
+```
+
+
+# Merge the results of the 3 stages
+
+If a variety doesn't exist, we will just use the 5% probability (assume 0.05 significance) of that stage to impute.
+
+Stage I: 20%
+Stage II: 30%
+Stage III: 50%
+
+(We can increase the weight of Stage III to have our best result...)
+
+```{r}
+probImpute <- quantile(res_s2$weightedProb, probs = 0.05)
+res_s2_imputed <- res_s1 %>% select(-weightedProb)
+res_s2_imputed <- left_join(res_s2_imputed, res_s2, by = "VARIETY")
+res_s2_imputed$weightedProb[is.na(res_s2_imputed$weightedProb)] <- probImpute
+
+probImpute <- quantile(res_s3$weightedProb, probs = 0.05)
+res_s3_imputed <- res_s2_imputed[,-dim(res_s2_imputed)[2]]
+res_s3_imputed <- left_join(res_s3_imputed, res_s3, by = "VARIETY")
+res_s3_imputed$weightedProb[is.na(res_s3_imputed$weightedProb)] <- probImpute
+
+RES <- data.frame(VARIETY = res_s1$VARIETY, 
+                  weightedProb = 0.2 * res_s1$weightedProb + 
+                    0.3 * res_s2_imputed$weightedProb + 0.5 * res_s3_imputed$weightedProb)
+RES <- RES %>% arrange(desc(weightedProb))
+
+ResSubmiss <- sampSubmiss %>% mutate(PREDICTION = 0)
+
+ResSubmiss <- ResSubmiss %>% 
+  mutate(PREDICTION = ifelse(VARIETY_ID %in% as.character(RES$VARIETY[1:13]), 1, PREDICTION))
+write.csv(ResSubmiss, "RMmerged_13.csv", row.names = F)
+```
+
+
+# Include the prediction in a function
+
+```{r}
+PredictSuccess <- function(res_s1, res_s2, res_s3, filename){
+  # Input the predicted probabilities of the three stages 
+  # Output the overall probabilities that could predict successful varieties in the future
+  
+  probImpute <- quantile(res_s2$weightedProb, probs = 0.05)
+  res_s2_imputed <- res_s1 %>% select(-weightedProb)
+  res_s2_imputed <- left_join(res_s2_imputed, res_s2, by = "VARIETY")
+  res_s2_imputed$weightedProb[is.na(res_s2_imputed$weightedProb)] <- probImpute
+
+  probImpute <- quantile(res_s3$weightedProb, probs = 0.05)
+  res_s3_imputed <- res_s2_imputed[,-dim(res_s2_imputed)[2]]
+  res_s3_imputed <- left_join(res_s3_imputed, res_s3, by = "VARIETY")
+  res_s3_imputed$weightedProb[is.na(res_s3_imputed$weightedProb)] <- probImpute
+
+  RES <- data.frame(VARIETY = res_s1$VARIETY, 
+                  weightedProb = 0.2 * res_s1$weightedProb + 
+                    0.3 * res_s2_imputed$weightedProb + 0.5 * res_s3_imputed$weightedProb)
+  RES <- RES %>% arrange(desc(weightedProb))
+  
+  write.csv(RES, filename, row.names = F)
+}
+  
+```
+
+
+```{r}
+PredictSuccess(res_s1, res_s2, res_s3, "CLS2014Success.csv")
+
+training_yr2009 <- training %>%
+  filter(YEAR == 2009)
+training_yr2010 <- training %>%
+  filter(YEAR == 2010)
+training_yr2011 <- training %>%
+  filter(YEAR == 2011)
+training_yr2012 <- training %>%
+  filter(YEAR == 2012)
+training_yr2013 <- training %>%
+  filter(YEAR == 2013)
+training_yr2014 <- training %>%
+  filter(YEAR == 2014)
+
+# Look at CLASS 2011
+training_cls2011_yr2009 <- training_yr2009
+training_cls2011_yr2010 <- training_yr2010 %>%
+  filter((VARIETY %in% training_cls2011_yr2009$VARIETY) | (CLASS_OF == 2011))
+training_cls2011_yr2011 <- training_yr2011 %>%
+  filter((VARIETY %in% training_cls2011_yr2010$VARIETY) | (CLASS_OF == 2011))
+training_cls2011_final <- training_cls2011_yr2011 %>%
+  filter(CLASS_OF == 2011)
+
+cls2011_s1 <- Find_elites(training_cls2011_yr2009)
+cls2011_s2 <- Find_elites(training_cls2011_yr2010)
+cls2011_s3 <- Find_elites(training_cls2011_yr2011)
+
+PredictSuccess(cls2011_s1, cls2011_s2, cls2011_s3, "CLS2011Success.csv")
+
+
+# Look at CLASS 2012
+training_cls2012_yr2010 <- training %>%
+  filter((YEAR == 2010) | (CLASS_OF == 2012))
+training_cls2012_yr2011 <- training_yr2011 %>%
+  filter((VARIETY %in% training_cls2012_yr2010$VARIETY) | (CLASS_OF == 2012))
+training_cls2012_yr2012 <- training_yr2012 %>%
+  filter((VARIETY %in% training_cls2012_yr2011$VARIETY) | (CLASS_OF == 2012))
+training_cls2012_final <- training_cls2012_yr2012 %>%
+  filter(CLASS_OF == 2012)
+
+cls2012_s1 <- Find_elites(training_cls2012_yr2010)
+cls2012_s2 <- Find_elites(training_cls2012_yr2011)
+cls2012_s3 <- Find_elites(training_cls2012_yr2012)
+
+PredictSuccess(cls2012_s1, cls2012_s2, cls2012_s3, "CLS2012Success.csv")
+
+
+# Look at CLASS 2013
+training_cls2013_yr2011 <- training_yr2011
+training_cls2013_yr2012 <- training_yr2012 %>%
+  filter((VARIETY %in% training_cls2013_yr2011$VARIETY) | (CLASS_OF == 2013))
+training_cls2013_yr2013 <- training_yr2013 %>%
+  filter((VARIETY %in% training_cls2013_yr2012$VARIETY) | (CLASS_OF == 2013))
+training_cls2013_final <- training_cls2013_yr2013 %>%
+  filter(CLASS_OF == 2013)
+
+cls2013_s1 <- Find_elites(training_cls2013_yr2011)
+cls2013_s2 <- Find_elites(training_cls2013_yr2012)
+cls2013_s3 <- Find_elites(training_cls2013_yr2013)
+
+PredictSuccess(cls2013_s1, cls2013_s2, cls2013_s3, "CLS2013Success.csv")
+
+
+```
+

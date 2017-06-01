@@ -1,0 +1,232 @@
+---
+title: "GenePrediction"
+author: "Jiabei Yang"
+date: "5/23/2017"
+output: pdf_document
+---
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(seqRFLP)
+```
+
+
+# 1 Separate the elites from the genetic information file
+
+```{r}
+gene_original_data <- read.csv("../Original/Genetic Information.csv")
+prediction_data <- read.csv("../Elite/Prediction_StageII_best.csv")
+elites_data_cls <- gene_original_data %>% filter(!is.na(CLASS_OF))
+elites_data_noncls <- gene_original_data %>% filter(is.na(CLASS_OF))
+elites_data_predict <- gene_original_data %>% 
+  filter(VARIETY %in% prediction_data$VARIETY_ID[prediction_data$PREDICTION == 1])
+
+elites_yes <- read.csv("../Elite/RMgroupS3_true13.csv")
+elites_yes <- gene_original_data %>% 
+  filter(VARIETY %in% elites_yes$VARIETY_ID[elites_yes$PREDICTION == 1])
+varieties_no <- setdiff(gene_original_data$VARIETY, elites_yes$VARIETY)
+elites_no <- gene_original_data %>% filter(VARIETY %in% varieties_no)
+```
+
+# 2 Output the elite data into FASTA format
+```{r}
+# cuttingLines_tmp1 <- seq(5, 2167, 40)
+# cuttingLines_tmp2 <- seq(44, 2167, 40)
+# cuttingLines <- NULL
+# for (i in 1:length(cuttingLines_tmp2)){
+#   cuttingLines <- c(cuttingLines, cuttingLines_tmp1[i], cuttingLines_tmp2[i])
+# }
+# cuttingLines <- c(cuttingLines, cuttingLines_tmp1[length(cuttingLines_tmp1)], 2167)
+# 
+# lineNames <- paste("Line", 1:(length(cuttingLines)/2), sep = "")
+# for (i in 1:length(lineNames)){
+#   elites_data_predict <- cbind(elites_data_predict, apply(elites_data_predict[, (cuttingLines[2*i-1]):(cuttingLines[2*i])], 1, paste, collapse = ""))
+#   colnames(elites_data_predict)[dim(elites_data_predict)[2]] <- lineNames[i]
+# }
+# elites_data_predict <- elites_data_predict[, c("VARIETY", lineNames)]
+
+elites_data_predict <- elites_data_predict %>% 
+  mutate(sequence = apply(elites_data_predict[, 5:2167], 1, paste, collapse = ""))
+elites_data_predict <- elites_data_predict[, c("VARIETY", "sequence")]
+
+dataframe2fas(elites_data_predict, file = "Elites_predict_StageII.fasta")
+```
+
+# 3 Output class data and non-class data to fasta
+
+```{r}
+# All Elites
+elites_data_overall <- elites_data_cls %>%
+  mutate(sequence = apply(elites_data_cls[, 5:2167], 1, paste, collapse = ""))
+elites_data_overall <- elites_data_overall[, c("VARIETY", "sequence")]
+
+dataframe2fas(elites_data_overall, file = "Elites_overall.fasta")
+
+# NonElites
+NonElites_data_overall <- elites_data_noncls %>%
+  mutate(sequence = apply(elites_data_noncls[, 5:2167], 1, paste, collapse = ""))
+NonElites_data_overall <- NonElites_data_overall[, c("VARIETY", "sequence")]
+NonElites_data_overall1 <- NonElites_data_overall[1:461, ]
+NonElites_data_overall2 <- NonElites_data_overall[462:922, ]
+NonElites_data_overall3 <- NonElites_data_overall[923:1383, ]
+
+dataframe2fas(NonElites_data_overall, file = "NonElites_overall.fasta")
+dataframe2fas(NonElites_data_overall1, file = "NonElites_overall1.fasta")
+dataframe2fas(NonElites_data_overall2, file = "NonElites_overall2.fasta")
+dataframe2fas(NonElites_data_overall3, file = "NonElites_overall3.fasta")
+
+# Elites 2011
+elites_data_cls2011 <- elites_data_cls %>%
+  filter(CLASS_OF == 2011) 
+elites_data_cls2011 <- elites_data_cls2011 %>%
+  mutate(sequence = apply(elites_data_cls2011[, 5:2167], 1, paste, collapse = ""))
+elites_data_cls2011 <- elites_data_cls2011[, c("VARIETY", "sequence")]
+
+dataframe2fas(elites_data_cls2011, file = "Elites_cls2011.fasta")
+
+# Elites 2012
+elites_data_cls2012 <- elites_data_cls %>%
+  filter(CLASS_OF == 2012) 
+elites_data_cls2012 <- elites_data_cls2012 %>%
+  mutate(sequence = apply(elites_data_cls2012[, 5:2167], 1, paste, collapse = ""))
+elites_data_cls2012 <- elites_data_cls2012[, c("VARIETY", "sequence")]
+
+dataframe2fas(elites_data_cls2012, file = "Elites_cls2012.fasta")
+
+# Elites 2013
+elites_data_cls2013 <- elites_data_cls %>%
+  filter(CLASS_OF == 2013) 
+elites_data_cls2013 <- elites_data_cls2013 %>%
+  mutate(sequence = apply(elites_data_cls2013[, 5:2167], 1, paste, collapse = ""))
+elites_data_cls2013 <- elites_data_cls2013[, c("VARIETY", "sequence")]
+
+dataframe2fas(elites_data_cls2013, file = "Elites_cls2013.fasta")
+
+# Elites 2014
+elites_data_cls2014 <- elites_data_cls %>%
+  filter(CLASS_OF == 2014) 
+elites_data_cls2014 <- elites_data_cls2014 %>%
+  mutate(sequence = apply(elites_data_cls2014[, 5:2167], 1, paste, collapse = ""))
+elites_data_cls2014 <- elites_data_cls2014[, c("VARIETY", "sequence")]
+
+dataframe2fas(elites_data_cls2014, file = "Elites_cls2014.fasta")
+```
+
+# Find patterns in Elites
+
+We assume "NN" means we don't know about this location, and it won't be any other possible values.
+
+```{r}
+FindPattern <- function(elites_data_cls, elites_data_noncls){
+  OneLevelElites <- NULL
+  TwoLevelElites <- NULL
+  ThreeLevelElites <- NULL
+  OneLevelNonElites <- NULL
+  TwoLevelNonElites <- NULL
+  ThreeLevelNonElites <- NULL
+  j <- 1
+  k <- 1
+  jj <- 1
+  for (i in 5:2167){
+    
+    if (length(unique(elites_data_cls[, i])) == 1){
+      OneLevelElites <- cbind(OneLevelElites, as.character(elites_data_cls[1, i]))
+      colnames(OneLevelElites)[j] <- colnames(elites_data_cls)[i]
+      j <- j+1
+    }
+    else if (length(unique(elites_data_cls[, i])) == 2){
+      TwoLevelElites <- cbind(TwoLevelElites, as.character(unique(elites_data_cls[, i])))
+      colnames(TwoLevelElites)[jj] <- colnames(elites_data_cls)[i]
+      jj <- jj+1
+    }
+    
+    if (length(unique(elites_data_noncls[, i])) == 1){
+      OneLevelNonElites <- cbind(OneLevelNonElites, as.character(elites_data_noncls[1, i]))
+      colnames(OneLevelNonElites)[k] <- colnames(elites_data_noncls)[i]
+      k <- k+1
+    }
+  
+  }
+  
+  patternOneLevel <- OneLevelElites[, setdiff(colnames(OneLevelElites), 
+                                              colnames(OneLevelNonElites))]
+  probPattern_noncls <- NULL
+  for (i in 1:length(patternOneLevel)){
+    probPattern_noncls <- c(probPattern_noncls, 
+                            mean(elites_data_noncls[, names(patternOneLevel)[i]] == patternOneLevel[i]))
+  }
+  names(probPattern_noncls) <- names(patternOneLevel)
+  
+  probPattern_noncls <- data.frame(location = names(probPattern_noncls),
+                                   probElite = probPattern_noncls,
+                                   pattern = as.character(patternOneLevel))
+  probPattern_noncls <- probPattern_noncls %>% arrange(probElite)
+  
+  probPattern2_noncls <- NULL
+  for (i in 1:dim(TwoLevelElites)[2]){
+    probPattern2_noncls <- c(probPattern2_noncls, 
+                            mean(elites_data_noncls[, colnames(TwoLevelElites)[i]] %in% TwoLevelElites[,i]))
+  }
+  names(probPattern2_noncls) <- colnames(TwoLevelElites)
+  
+  probPattern2_noncls <- data.frame(location = names(probPattern2_noncls),
+                                   probElite = probPattern2_noncls,
+                                   pattern1 = as.character(TwoLevelElites[1,]),
+                                   pattern2 = as.character(TwoLevelElites[2,]))
+  probPattern2_noncls <- probPattern2_noncls %>% arrange(probElite)
+  return(probPattern_noncls)
+}
+```
+
+With 0.76^17 prob we will identify a wrong elite.
+
+Prove:
+```{r}
+probPattern_noncls <- probPattern_noncls[1:84,]
+probPattern2_noncls <- probPattern2_noncls[1:121,]
+ElitesinNonElites <- elites_data_noncls
+for (i in 1:dim(probPattern_noncls)[1]){
+  ElitesinNonElites <- ElitesinNonElites %>% filter(as.character(eval(parse(text = paste("ElitesinNonElites", as.character(probPattern_noncls$location[i]), sep = "$")))) == as.character(probPattern_noncls$pattern[i]))
+}
+
+for (i in 1:dim(probPattern2_noncls)[1]){
+  ElitesinNonElites <- ElitesinNonElites %>% filter(as.character(eval(parse(text = paste("ElitesinNonElites", as.character(probPattern2_noncls$location[i]), sep = "$")))) %in% as.character(unlist(probPattern2_noncls[i, c("pattern1", "pattern2")])))
+}
+
+```
+
+Test on our predicted elite data.
+
+```{r}
+probPattern_noncls <- FindPattern(elites_yes, elites_no)
+
+ElitesinNonElites <- elites_no
+for (i in 1:dim(probPattern_noncls)[1]){
+  ElitesinNonElites <- ElitesinNonElites %>% filter(as.character(eval(parse(text = paste("ElitesinNonElites", as.character(probPattern_noncls$location[i]), sep = "$")))) == as.character(probPattern_noncls$pattern[i]))
+  if (dim(ElitesinNonElites)[1] / dim(elites_no)[1] <= 0.05){
+    break
+  }
+}
+print(i)
+probPattern_noncls <- probPattern_noncls[1:i,]
+```
+
+```{r}
+probPattern_noncls_overall <- FindPattern(elites_data_cls, elites_data_noncls)
+```
+
+
+1. all of them are duplicates
+
+# Output Figures
+
+```{r}
+SignificantLoc <- data.frame(location = colnames(gene_original_data)[5:2167])
+SignificantLoc <- left_join(SignificantLoc, probPattern_noncls, by = "location")
+SignificantLoc <- SignificantLoc %>% 
+  mutate(probElite = 1 - probElite) %>%
+  mutate(probElite = ifelse(is.na(probElite), 0, probElite))
+write.csv(SignificantLoc, "SigGenesFigure.csv", row.names = F)
+```
+
